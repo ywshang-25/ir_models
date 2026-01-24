@@ -6,5 +6,29 @@ A collection of stochastic interest rate models and interest rate derivative pri
 
 from .vasicek import VasicekModel
 from .cir import CIRModel, DiscretizationScheme
+from .pricing import (
+    price_derivative,
+    bond_option_price,
+    caplet_price,
+    floorlet_price,
+    cap_price,
+    floor_price,
+    swaption_price,
+    make_vasicek_bond_price_func,
+    make_cir_bond_price_func,
+)
 
-__all__ = ["VasicekModel", "CIRModel", "DiscretizationScheme"]
+__all__ = [
+    "VasicekModel",
+    "CIRModel",
+    "DiscretizationScheme",
+    "price_derivative",
+    "bond_option_price",
+    "caplet_price",
+    "floorlet_price",
+    "cap_price",
+    "floor_price",
+    "swaption_price",
+    "make_vasicek_bond_price_func",
+    "make_cir_bond_price_func",
+]
