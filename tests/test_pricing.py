@@ -17,6 +17,7 @@ from lib.pricing import (
     cap_price,
     floor_price,
     swaption_price,
+    make_bond_price_func,
     make_vasicek_bond_price_func,
     make_cir_bond_price_func,
 )
@@ -409,6 +410,70 @@ class TestBondPriceFunctions:
         price_func = bond_func(np.array([r_t]), t=0, T=T)[0]
 
         assert np.isclose(price_model, price_func)
+
+
+class TestUnifiedBondPriceFunc:
+    """Tests for the unified make_bond_price_func function."""
+
+    def test_works_with_vasicek_model(self):
+        """Unified function should work with VasicekModel."""
+        model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+        bond_func = make_bond_price_func(model)
+        r_t = np.array([0.03, 0.04, 0.05])
+        prices = bond_func(r_t, t=0.0, T=5.0)
+        assert np.all(prices > 0)
+        assert np.all(prices < 1)
+
+    def test_works_with_cir_model(self):
+        """Unified function should work with CIRModel."""
+        model = CIRModel(a=0.5, b=0.05, sigma=0.1, r0=0.03)
+        bond_func = make_bond_price_func(model)
+        r_t = np.array([0.03, 0.04, 0.05])
+        prices = bond_func(r_t, t=0.0, T=5.0)
+        assert np.all(prices > 0)
+        assert np.all(prices < 1)
+
+    def test_vasicek_unified_matches_specific(self):
+        """Unified function should match model-specific function for Vasicek."""
+        model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+        unified_func = make_bond_price_func(model)
+        specific_func = make_vasicek_bond_price_func(0.5, 0.05, 0.02)
+
+        r_t = np.array([0.02, 0.04, 0.06])
+        prices_unified = unified_func(r_t, t=0.0, T=5.0)
+        prices_specific = specific_func(r_t, t=0.0, T=5.0)
+
+        np.testing.assert_array_almost_equal(prices_unified, prices_specific)
+
+    def test_cir_unified_matches_specific(self):
+        """Unified function should match model-specific function for CIR."""
+        model = CIRModel(a=0.5, b=0.05, sigma=0.1, r0=0.03)
+        unified_func = make_bond_price_func(model)
+        specific_func = make_cir_bond_price_func(0.5, 0.05, 0.1)
+
+        r_t = np.array([0.02, 0.04, 0.06])
+        prices_unified = unified_func(r_t, t=0.0, T=5.0)
+        prices_specific = specific_func(r_t, t=0.0, T=5.0)
+
+        np.testing.assert_array_almost_equal(prices_unified, prices_specific)
+
+    def test_unsupported_model_raises_error(self):
+        """Unified function should raise error for unsupported model types."""
+        class FakeModel:
+            pass
+
+        with pytest.raises(ValueError, match="Unsupported model type"):
+            make_bond_price_func(FakeModel())
+
+    def test_unified_with_swaption_pricing(self):
+        """Test unified function in actual pricing workflow."""
+        model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+        t, r = model.simulate_short_rate(T=3.0, n_steps=300, n_paths=5000, seed=42)
+
+        bond_func = make_bond_price_func(model)
+        price, se = swaption_price(t, r, T_option=1.0, T_swap_end=3.0, K=0.04,
+                                   frequency=0.5, bond_price_func=bond_func)
+        assert price >= -se * 3
 
 
 class TestPricingWithCIRModel:

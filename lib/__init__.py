@@ -14,6 +14,7 @@ from .pricing import (
     cap_price,
     floor_price,
     swaption_price,
+    make_bond_price_func,
     make_vasicek_bond_price_func,
     make_cir_bond_price_func,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "cap_price",
     "floor_price",
     "swaption_price",
+    "make_bond_price_func",
     "make_vasicek_bond_price_func",
     "make_cir_bond_price_func",
 ]

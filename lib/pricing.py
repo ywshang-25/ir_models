@@ -623,6 +623,49 @@ def swaption_price(
 
 # Convenience functions for creating bond price functions from models
 
+def make_bond_price_func(model):
+    """
+    Create a bond price function from a short-rate model.
+
+    This unified function works with both VasicekModel and CIRModel,
+    automatically detecting the model type and using the appropriate
+    analytical bond pricing formula.
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model instance
+
+    Returns
+    -------
+    bond_price_func : Callable
+        Function that computes P(t, T) given r(t):
+        bond_price_func(r_t: np.ndarray, t: float, T: float) -> np.ndarray
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, CIRModel, make_bond_price_func
+    >>> vasicek = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> bond_func = make_bond_price_func(vasicek)
+    >>> prices = bond_func(np.array([0.03, 0.04]), t=0, T=5.0)
+
+    >>> cir = CIRModel(a=0.5, b=0.05, sigma=0.1, r0=0.03)
+    >>> bond_func = make_bond_price_func(cir)
+    >>> prices = bond_func(np.array([0.03, 0.04]), t=0, T=5.0)
+    """
+    model_class_name = model.__class__.__name__
+
+    if model_class_name == "VasicekModel":
+        return make_vasicek_bond_price_func(model.a, model.b, model.sigma)
+    elif model_class_name == "CIRModel":
+        return make_cir_bond_price_func(model.a, model.b, model.sigma)
+    else:
+        raise ValueError(
+            f"Unsupported model type: {model_class_name}. "
+            "Expected VasicekModel or CIRModel."
+        )
+
+
 def make_vasicek_bond_price_func(a: float, b: float, sigma: float):
     """
     Create a bond price function for the Vasicek model.
