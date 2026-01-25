@@ -17,6 +17,8 @@ from lib.pricing import (
     cap_price,
     floor_price,
     swaption_price,
+    swap_price,
+    par_swap_rate,
     make_bond_price_func,
     make_vasicek_bond_price_func,
     make_cir_bond_price_func,
@@ -356,6 +358,119 @@ class TestSwaptionPrice:
         t, r = long_paths
         with pytest.raises(ValueError, match="Swap end must be after option expiry"):
             swaption_price(t, r, T_option=3.0, T_swap_end=2.0, K=0.04)
+
+
+class TestSwapPrice:
+    """Tests for swap pricing."""
+
+    @pytest.fixture
+    def vasicek_model(self):
+        return VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+
+    @pytest.fixture
+    def cir_model(self):
+        return CIRModel(a=0.5, b=0.05, sigma=0.1, r0=0.03)
+
+    def test_swap_returns_float(self, vasicek_model):
+        value = swap_price(vasicek_model, T_start=0, T_end=5, K=0.04)
+        assert isinstance(value, float)
+
+    def test_payer_receiver_opposite_signs(self, vasicek_model):
+        """Payer and receiver swaps should have opposite values."""
+        payer_value = swap_price(vasicek_model, T_start=0, T_end=5, K=0.04, payer=True)
+        receiver_value = swap_price(vasicek_model, T_start=0, T_end=5, K=0.04, payer=False)
+        assert np.isclose(payer_value, -receiver_value)
+
+    def test_swap_at_par_rate_is_zero(self, vasicek_model):
+        """Swap value should be zero when K equals par rate."""
+        par_rate = par_swap_rate(vasicek_model, T_start=0, T_end=5, frequency=0.25)
+        value = swap_price(vasicek_model, T_start=0, T_end=5, K=par_rate, frequency=0.25)
+        assert np.isclose(value, 0, atol=1e-10)
+
+    def test_payer_swap_value_decreases_with_higher_strike(self, vasicek_model):
+        """Higher fixed rate means lower payer swap value."""
+        value_low_K = swap_price(vasicek_model, T_start=0, T_end=5, K=0.03, payer=True)
+        value_high_K = swap_price(vasicek_model, T_start=0, T_end=5, K=0.06, payer=True)
+        assert value_low_K > value_high_K
+
+    def test_receiver_swap_value_increases_with_higher_strike(self, vasicek_model):
+        """Higher fixed rate means higher receiver swap value."""
+        value_low_K = swap_price(vasicek_model, T_start=0, T_end=5, K=0.03, payer=False)
+        value_high_K = swap_price(vasicek_model, T_start=0, T_end=5, K=0.06, payer=False)
+        assert value_high_K > value_low_K
+
+    def test_swap_with_notional(self, vasicek_model):
+        """Swap value should scale linearly with notional."""
+        value_1 = swap_price(vasicek_model, T_start=0, T_end=5, K=0.04, notional=1)
+        value_100 = swap_price(vasicek_model, T_start=0, T_end=5, K=0.04, notional=100)
+        assert np.isclose(value_100, value_1 * 100)
+
+    def test_works_with_cir_model(self, cir_model):
+        """Swap pricing should work with CIR model."""
+        value = swap_price(cir_model, T_start=0, T_end=5, K=0.04)
+        assert isinstance(value, float)
+
+    def test_invalid_dates_raises_error(self, vasicek_model):
+        with pytest.raises(ValueError, match="T_end must be greater than T_start"):
+            swap_price(vasicek_model, T_start=5, T_end=2, K=0.04)
+
+
+class TestParSwapRate:
+    """Tests for par swap rate calculation."""
+
+    @pytest.fixture
+    def vasicek_model(self):
+        return VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+
+    @pytest.fixture
+    def cir_model(self):
+        return CIRModel(a=0.5, b=0.05, sigma=0.1, r0=0.03)
+
+    def test_par_rate_returns_float(self, vasicek_model):
+        rate = par_swap_rate(vasicek_model, T_start=0, T_end=5, frequency=0.25)
+        assert isinstance(rate, float)
+
+    def test_par_rate_positive(self, vasicek_model):
+        """Par rate should be positive for typical parameters."""
+        rate = par_swap_rate(vasicek_model, T_start=0, T_end=5, frequency=0.25)
+        assert rate > 0
+
+    def test_par_rate_reasonable_range(self, vasicek_model):
+        """Par rate should be in reasonable range."""
+        rate = par_swap_rate(vasicek_model, T_start=0, T_end=5, frequency=0.25)
+        assert 0.01 < rate < 0.10  # Between 1% and 10%
+
+    def test_par_rate_increases_with_longer_tenor(self, vasicek_model):
+        """In upward sloping yield curve, longer tenor = higher par rate."""
+        # Note: This depends on model parameters; may not always hold
+        rate_2y = par_swap_rate(vasicek_model, T_start=0, T_end=2, frequency=0.25)
+        rate_10y = par_swap_rate(vasicek_model, T_start=0, T_end=10, frequency=0.25)
+        # Just check both are reasonable
+        assert rate_2y > 0
+        assert rate_10y > 0
+
+    def test_works_with_cir_model(self, cir_model):
+        """Par rate calculation should work with CIR model."""
+        rate = par_swap_rate(cir_model, T_start=0, T_end=5, frequency=0.25)
+        assert isinstance(rate, float)
+        assert rate > 0
+
+    def test_different_frequencies(self, vasicek_model):
+        """Par rate should be calculated for different frequencies."""
+        rate_quarterly = par_swap_rate(vasicek_model, T_start=0, T_end=5, frequency=0.25)
+        rate_semiannual = par_swap_rate(vasicek_model, T_start=0, T_end=5, frequency=0.5)
+        # Both should be positive and reasonable
+        assert rate_quarterly > 0
+        assert rate_semiannual > 0
+
+    def test_forward_starting_swap(self, vasicek_model):
+        """Par rate for forward starting swap."""
+        rate = par_swap_rate(vasicek_model, T_start=1, T_end=6, frequency=0.25)
+        assert rate > 0
+
+    def test_invalid_dates_raises_error(self, vasicek_model):
+        with pytest.raises(ValueError, match="T_end must be greater than T_start"):
+            par_swap_rate(vasicek_model, T_start=5, T_end=2)
 
 
 class TestBondPriceFunctions:

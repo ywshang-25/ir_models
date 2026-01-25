@@ -621,6 +621,147 @@ def swaption_price(
     return price, std_error
 
 
+def swap_price(
+    model,
+    T_start: float,
+    T_end: float,
+    K: float,
+    frequency: float = 0.25,
+    notional: float = 1.0,
+    payer: bool = True
+) -> float:
+    """
+    Price a plain vanilla interest rate swap.
+
+    A payer swap pays fixed rate K and receives floating rate.
+    A receiver swap receives fixed rate K and pays floating rate.
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model (must have r0, a, b, sigma attributes)
+    T_start : float
+        Swap start date
+    T_end : float
+        Swap end date
+    K : float
+        Fixed rate (strike)
+    frequency : float
+        Payment frequency in years (e.g., 0.25 for quarterly)
+    notional : float
+        Notional principal
+    payer : bool
+        True for payer swap (pay fixed), False for receiver swap
+
+    Returns
+    -------
+    value : float
+        Present value of the swap
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, swap_price
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> value = swap_price(model, T_start=0, T_end=5, K=0.04, frequency=0.25)
+    """
+    if T_end <= T_start:
+        raise ValueError("T_end must be greater than T_start")
+
+    bond_func = make_bond_price_func(model)
+    r0 = np.array([model.r0])
+
+    # Payment dates
+    payment_dates = np.arange(T_start + frequency, T_end + 1e-10, frequency)
+
+    swap_value = 0.0
+
+    for T_i in payment_dates:
+        tau = frequency
+        T_prev = T_i - frequency
+
+        # Discount factor to payment date
+        P_i = bond_func(r0, t=0, T=T_i)[0]
+
+        # Discount factor to previous date
+        if T_prev > 0:
+            P_prev = bond_func(r0, t=0, T=T_prev)[0]
+        else:
+            P_prev = 1.0
+
+        # Forward rate L(0; T_prev, T_i)
+        L = (P_prev / P_i - 1) / tau
+
+        # Swap cashflow: floating - fixed
+        cashflow = notional * tau * (L - K)
+        swap_value += cashflow * P_i
+
+    return swap_value if payer else -swap_value
+
+
+def par_swap_rate(
+    model,
+    T_start: float,
+    T_end: float,
+    frequency: float = 0.25
+) -> float:
+    """
+    Calculate the par swap rate (fair fixed rate that makes swap value zero).
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model
+    T_start : float
+        Swap start date
+    T_end : float
+        Swap end date
+    frequency : float
+        Payment frequency in years
+
+    Returns
+    -------
+    rate : float
+        Par swap rate
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, par_swap_rate
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> rate = par_swap_rate(model, T_start=0, T_end=5, frequency=0.25)
+    >>> print(f"5Y Par Rate: {rate:.4%}")
+
+    Notes
+    -----
+    The par swap rate is calculated analytically as:
+        S = (P(0, T_start) - P(0, T_end)) / Σ τ_i P(0, T_i)
+
+    where the sum is over all payment dates.
+    """
+    if T_end <= T_start:
+        raise ValueError("T_end must be greater than T_start")
+
+    bond_func = make_bond_price_func(model)
+    r0 = np.array([model.r0])
+
+    # Payment dates
+    payment_dates = np.arange(T_start + frequency, T_end + 1e-10, frequency)
+
+    # Discount factor to start
+    P_start = bond_func(r0, t=0, T=T_start)[0] if T_start > 0 else 1.0
+
+    # Discount factor to end
+    P_end = bond_func(r0, t=0, T=T_end)[0]
+
+    # Annuity factor: sum of τ * P(0, T_i)
+    annuity = 0.0
+    for T_i in payment_dates:
+        P_i = bond_func(r0, t=0, T=T_i)[0]
+        annuity += frequency * P_i
+
+    # Par rate formula
+    return (P_start - P_end) / annuity
+
+
 # Convenience functions for creating bond price functions from models
 
 def make_bond_price_func(model):
