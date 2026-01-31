@@ -762,6 +762,338 @@ def par_swap_rate(
     return (P_start - P_end) / annuity
 
 
+# =============================================================================
+# Model-based pricing functions (convenient wrappers)
+# =============================================================================
+# These functions take the model directly and handle path simulation internally.
+# They provide a simpler interface compared to the path-based functions above.
+
+def _get_simulation_params(model, T: float, n_paths: int, n_steps: int, seed):
+    """Helper to simulate paths and create bond price function."""
+    model_class_name = model.__class__.__name__
+
+    if model_class_name == "VasicekModel":
+        t, r = model.simulate_short_rate(T, n_steps, n_paths, seed)
+    elif model_class_name == "CIRModel":
+        from .cir import DiscretizationScheme
+        t, r = model.simulate_short_rate(T, n_steps, n_paths, seed,
+                                         scheme=DiscretizationScheme.FULL_TRUNCATION)
+    else:
+        raise ValueError(f"Unsupported model type: {model_class_name}")
+
+    bond_func = make_bond_price_func(model)
+    return t, r, bond_func
+
+
+def price_bond_option(
+    model,
+    T_option: float,
+    T_bond: float,
+    K: float,
+    option_type: str = "call",
+    n_paths: int = 10000,
+    n_steps: int = 100,
+    seed: int = None
+) -> tuple[float, float]:
+    """
+    Price a European option on a zero-coupon bond.
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model
+    T_option : float
+        Option expiry time
+    T_bond : float
+        Bond maturity time (must be > T_option)
+    K : float
+        Strike price
+    option_type : str
+        "call" or "put"
+    n_paths : int
+        Number of Monte Carlo paths
+    n_steps : int
+        Number of time steps
+    seed : int, optional
+        Random seed
+
+    Returns
+    -------
+    price : float
+        Option price
+    std_error : float
+        Standard error of the estimate
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, price_bond_option
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> price, se = price_bond_option(model, T_option=1, T_bond=2, K=0.95)
+    """
+    t, r, bond_func = _get_simulation_params(model, T_bond, n_paths, n_steps, seed)
+    return bond_option_price(t, r, T_option, T_bond, K, option_type, bond_func)
+
+
+def price_caplet(
+    model,
+    T_start: float,
+    T_end: float,
+    K: float,
+    notional: float = 1.0,
+    n_paths: int = 10000,
+    n_steps: int = 100,
+    seed: int = None
+) -> tuple[float, float]:
+    """
+    Price a caplet (call option on a forward rate).
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model
+    T_start : float
+        Start of the rate period (caplet fixing date)
+    T_end : float
+        End of the rate period (caplet payment date)
+    K : float
+        Cap rate (strike)
+    notional : float
+        Notional principal
+    n_paths : int
+        Number of Monte Carlo paths
+    n_steps : int
+        Number of time steps
+    seed : int, optional
+        Random seed
+
+    Returns
+    -------
+    price : float
+        Caplet price
+    std_error : float
+        Standard error
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, price_caplet
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> price, se = price_caplet(model, T_start=0.5, T_end=1.0, K=0.04)
+    """
+    t, r, bond_func = _get_simulation_params(model, T_end, n_paths, n_steps, seed)
+    return caplet_price(t, r, T_start, T_end, K, notional, bond_func)
+
+
+def price_floorlet(
+    model,
+    T_start: float,
+    T_end: float,
+    K: float,
+    notional: float = 1.0,
+    n_paths: int = 10000,
+    n_steps: int = 100,
+    seed: int = None
+) -> tuple[float, float]:
+    """
+    Price a floorlet (put option on a forward rate).
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model
+    T_start : float
+        Start of the rate period
+    T_end : float
+        End of the rate period
+    K : float
+        Floor rate (strike)
+    notional : float
+        Notional principal
+    n_paths : int
+        Number of Monte Carlo paths
+    n_steps : int
+        Number of time steps
+    seed : int, optional
+        Random seed
+
+    Returns
+    -------
+    price : float
+        Floorlet price
+    std_error : float
+        Standard error
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, price_floorlet
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> price, se = price_floorlet(model, T_start=0.5, T_end=1.0, K=0.04)
+    """
+    t, r, bond_func = _get_simulation_params(model, T_end, n_paths, n_steps, seed)
+    return floorlet_price(t, r, T_start, T_end, K, notional, bond_func)
+
+
+def price_cap(
+    model,
+    T_start: float,
+    T_end: float,
+    K: float,
+    frequency: float = 0.25,
+    notional: float = 1.0,
+    n_paths: int = 10000,
+    n_steps: int = 100,
+    seed: int = None
+) -> tuple[float, float]:
+    """
+    Price an interest rate cap (portfolio of caplets).
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model
+    T_start : float
+        Start of the cap period
+    T_end : float
+        End of the cap period
+    K : float
+        Cap rate (strike)
+    frequency : float
+        Payment frequency in years (e.g., 0.25 for quarterly)
+    notional : float
+        Notional principal
+    n_paths : int
+        Number of Monte Carlo paths
+    n_steps : int
+        Number of time steps
+    seed : int, optional
+        Random seed
+
+    Returns
+    -------
+    price : float
+        Cap price
+    std_error : float
+        Combined standard error
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, price_cap
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> price, se = price_cap(model, T_start=0.5, T_end=2.0, K=0.04)
+    """
+    t, r, bond_func = _get_simulation_params(model, T_end, n_paths, n_steps, seed)
+    return cap_price(t, r, T_start, T_end, K, frequency, notional, bond_func)
+
+
+def price_floor(
+    model,
+    T_start: float,
+    T_end: float,
+    K: float,
+    frequency: float = 0.25,
+    notional: float = 1.0,
+    n_paths: int = 10000,
+    n_steps: int = 100,
+    seed: int = None
+) -> tuple[float, float]:
+    """
+    Price an interest rate floor (portfolio of floorlets).
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model
+    T_start : float
+        Start of the floor period
+    T_end : float
+        End of the floor period
+    K : float
+        Floor rate (strike)
+    frequency : float
+        Payment frequency in years
+    notional : float
+        Notional principal
+    n_paths : int
+        Number of Monte Carlo paths
+    n_steps : int
+        Number of time steps
+    seed : int, optional
+        Random seed
+
+    Returns
+    -------
+    price : float
+        Floor price
+    std_error : float
+        Combined standard error
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, price_floor
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> price, se = price_floor(model, T_start=0.5, T_end=2.0, K=0.04)
+    """
+    t, r, bond_func = _get_simulation_params(model, T_end, n_paths, n_steps, seed)
+    return floor_price(t, r, T_start, T_end, K, frequency, notional, bond_func)
+
+
+def price_swaption(
+    model,
+    T_option: float,
+    T_swap_end: float,
+    K: float,
+    frequency: float = 0.25,
+    notional: float = 1.0,
+    payer: bool = True,
+    n_paths: int = 10000,
+    n_steps: int = 100,
+    seed: int = None
+) -> tuple[float, float]:
+    """
+    Price a European swaption.
+
+    A payer swaption gives the right to enter a payer swap (pay fixed, receive floating).
+    A receiver swaption gives the right to enter a receiver swap.
+
+    Parameters
+    ----------
+    model : VasicekModel or CIRModel
+        The short-rate model
+    T_option : float
+        Option expiry (swap start date)
+    T_swap_end : float
+        End date of the underlying swap
+    K : float
+        Fixed swap rate (strike)
+    frequency : float
+        Payment frequency in years
+    notional : float
+        Notional principal
+    payer : bool
+        True for payer swaption, False for receiver swaption
+    n_paths : int
+        Number of Monte Carlo paths
+    n_steps : int
+        Number of time steps
+    seed : int, optional
+        Random seed
+
+    Returns
+    -------
+    price : float
+        Swaption price
+    std_error : float
+        Standard error of the estimate
+
+    Examples
+    --------
+    >>> from lib import VasicekModel, price_swaption
+    >>> model = VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+    >>> price, se = price_swaption(model, T_option=1, T_swap_end=5, K=0.04)
+    """
+    t, r, bond_func = _get_simulation_params(model, T_swap_end, n_paths, n_steps, seed)
+    return swaption_price(t, r, T_option, T_swap_end, K, frequency, notional, payer, bond_func)
+
+
 # Convenience functions for creating bond price functions from models
 
 def make_bond_price_func(model):

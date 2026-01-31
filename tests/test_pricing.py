@@ -10,6 +10,7 @@ sys.path.insert(0, '..')
 from lib.vasicek import VasicekModel
 from lib.cir import CIRModel, DiscretizationScheme
 from lib.pricing import (
+    # Path-based functions
     price_derivative,
     bond_option_price,
     caplet_price,
@@ -17,8 +18,16 @@ from lib.pricing import (
     cap_price,
     floor_price,
     swaption_price,
+    # Model-based functions
     swap_price,
     par_swap_rate,
+    price_bond_option,
+    price_caplet,
+    price_floorlet,
+    price_cap,
+    price_floor,
+    price_swaption,
+    # Helpers
     make_bond_price_func,
     make_vasicek_bond_price_func,
     make_cir_bond_price_func,
@@ -661,6 +670,117 @@ class TestPutCallParity:
 
         # Allow for MC error
         assert np.isclose(lhs, rhs, rtol=0.1)
+
+
+class TestModelBasedPricingFunctions:
+    """Tests for model-based pricing functions (convenient wrappers)."""
+
+    @pytest.fixture
+    def vasicek_model(self):
+        return VasicekModel(a=0.5, b=0.05, sigma=0.02, r0=0.03)
+
+    @pytest.fixture
+    def cir_model(self):
+        return CIRModel(a=0.5, b=0.05, sigma=0.1, r0=0.03)
+
+    # Bond option tests
+    def test_price_bond_option_vasicek(self, vasicek_model):
+        price, se = price_bond_option(vasicek_model, T_option=1.0, T_bond=2.0, K=0.95,
+                                      n_paths=5000, seed=42)
+        assert price >= -se * 3
+        assert se > 0
+
+    def test_price_bond_option_cir(self, cir_model):
+        price, se = price_bond_option(cir_model, T_option=1.0, T_bond=2.0, K=0.95,
+                                      n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_bond_option_put(self, vasicek_model):
+        price, se = price_bond_option(vasicek_model, T_option=1.0, T_bond=2.0, K=0.95,
+                                      option_type="put", n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    # Caplet/floorlet tests
+    def test_price_caplet_vasicek(self, vasicek_model):
+        price, se = price_caplet(vasicek_model, T_start=0.5, T_end=1.0, K=0.04,
+                                 n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_caplet_cir(self, cir_model):
+        price, se = price_caplet(cir_model, T_start=0.5, T_end=1.0, K=0.04,
+                                 n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_floorlet_vasicek(self, vasicek_model):
+        price, se = price_floorlet(vasicek_model, T_start=0.5, T_end=1.0, K=0.04,
+                                   n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_floorlet_cir(self, cir_model):
+        price, se = price_floorlet(cir_model, T_start=0.5, T_end=1.0, K=0.04,
+                                   n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    # Cap/floor tests
+    def test_price_cap_vasicek(self, vasicek_model):
+        price, se = price_cap(vasicek_model, T_start=0.5, T_end=2.0, K=0.04,
+                              frequency=0.5, n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_cap_cir(self, cir_model):
+        price, se = price_cap(cir_model, T_start=0.5, T_end=2.0, K=0.04,
+                              frequency=0.5, n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_floor_vasicek(self, vasicek_model):
+        price, se = price_floor(vasicek_model, T_start=0.5, T_end=2.0, K=0.04,
+                                frequency=0.5, n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_floor_cir(self, cir_model):
+        price, se = price_floor(cir_model, T_start=0.5, T_end=2.0, K=0.04,
+                                frequency=0.5, n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    # Swaption tests
+    def test_price_swaption_vasicek(self, vasicek_model):
+        price, se = price_swaption(vasicek_model, T_option=1.0, T_swap_end=3.0, K=0.04,
+                                   frequency=0.5, n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_swaption_cir(self, cir_model):
+        price, se = price_swaption(cir_model, T_option=1.0, T_swap_end=3.0, K=0.04,
+                                   frequency=0.5, n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    def test_price_swaption_receiver(self, vasicek_model):
+        price, se = price_swaption(vasicek_model, T_option=1.0, T_swap_end=3.0, K=0.04,
+                                   frequency=0.5, payer=False, n_paths=5000, seed=42)
+        assert price >= -se * 3
+
+    # Test notional scaling
+    def test_price_cap_notional_scaling(self, vasicek_model):
+        price_1, _ = price_cap(vasicek_model, T_start=0.5, T_end=2.0, K=0.04,
+                               notional=1.0, n_paths=10000, seed=42)
+        price_100, _ = price_cap(vasicek_model, T_start=0.5, T_end=2.0, K=0.04,
+                                 notional=100.0, n_paths=10000, seed=42)
+        assert np.isclose(price_100, price_1 * 100, rtol=0.01)
+
+    # Test reproducibility with seed
+    def test_price_cap_reproducibility(self, vasicek_model):
+        price1, _ = price_cap(vasicek_model, T_start=0.5, T_end=2.0, K=0.04,
+                              n_paths=5000, seed=42)
+        price2, _ = price_cap(vasicek_model, T_start=0.5, T_end=2.0, K=0.04,
+                              n_paths=5000, seed=42)
+        assert price1 == price2
+
+    # Test strike sensitivity
+    def test_price_cap_strike_sensitivity(self, vasicek_model):
+        price_low_K, _ = price_cap(vasicek_model, T_start=0.5, T_end=2.0, K=0.03,
+                                   n_paths=10000, seed=42)
+        price_high_K, _ = price_cap(vasicek_model, T_start=0.5, T_end=2.0, K=0.06,
+                                    n_paths=10000, seed=42)
+        assert price_low_K > price_high_K
 
 
 if __name__ == '__main__':
